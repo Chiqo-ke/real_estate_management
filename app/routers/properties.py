@@ -38,3 +38,37 @@ async def create_property(property: PropertyCreate, db: Session = Depends(get_db
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+@router.get("/{property_id}/occupancy")
+async def get_property_occupancy(property_id: int, db: Session = Depends(get_db)):
+    query = text("""
+        SELECT p.*, 
+               COUNT(l.lease_id) as occupied_units,
+               p.total_units - COUNT(l.lease_id) as available_units
+        FROM properties p
+        LEFT JOIN leases l ON p.property_id = l.property_id 
+        WHERE p.property_id = :property_id AND l.lease_status = 'Active'
+        GROUP BY p.property_id
+    """)
+    result = db.execute(query, {"property_id": property_id}).fetchone()
+    if not result:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return dict(result._mapping)
+
+@router.get("/{property_id}/units")
+async def get_property_units(property_id: int, db: Session = Depends(get_db)):
+    query = text("""
+        SELECT l.unit_number, 
+               CASE 
+                   WHEN l.lease_status = 'Active' THEN 'Occupied'
+                   ELSE 'Available'
+               END as status,
+               t.first_name, 
+               t.last_name
+        FROM properties p
+        LEFT JOIN leases l ON p.property_id = l.property_id
+        LEFT JOIN tenants t ON l.tenant_id = t.tenant_id
+        WHERE p.property_id = :property_id
+    """)
+    results = db.execute(query, {"property_id": property_id}).fetchall()
+    return [dict(row._mapping) for row in results]
