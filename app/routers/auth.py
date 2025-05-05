@@ -3,9 +3,19 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import timedelta, datetime
+from jose import JWTError, jwt
 from ..database import get_db
-from ..services.auth import verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, get_password_hash
+from ..services.auth import (
+    verify_password, 
+    create_access_token, 
+    ACCESS_TOKEN_EXPIRE_MINUTES, 
+    get_password_hash,
+    oauth2_scheme,
+    SECRET_KEY,
+    ALGORITHM
+)
 from ..schemas.auth import Token, TenantCreate
+from ..models.user import User
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -151,3 +161,30 @@ async def register_tenant(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    tenant = db.execute(
+        text("SELECT * FROM tenants WHERE email = :email"),
+        {"email": email}
+    ).fetchone()
+    
+    if tenant is None:
+        raise credentials_exception
+        
+    return User.__table__.create(tenant._mapping)

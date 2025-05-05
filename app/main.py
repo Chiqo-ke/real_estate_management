@@ -4,20 +4,27 @@ from .routers import (
     tenants_router,
     leases_router,
     invoices_router,
-    payments_router
+    payments_router,
+    auth_router,
+    debts_router
 )
-from .routers.auth import router as auth_router
 from .config import settings
 
 app = FastAPI(title="Real Estate Management System")
 
 # Include routers
-app.include_router(properties_router, prefix=settings.API_V1_STR)
-app.include_router(tenants_router, prefix=settings.API_V1_STR)
-app.include_router(leases_router, prefix=settings.API_V1_STR)
-app.include_router(invoices_router, prefix=settings.API_V1_STR)
-app.include_router(payments_router, prefix=settings.API_V1_STR)
-app.include_router(auth_router, prefix=settings.API_V1_STR)
+routers = [
+    properties_router,
+    tenants_router,
+    leases_router,
+    invoices_router,
+    payments_router,
+    auth_router,
+    debts_router
+]
+
+for router in routers:
+    app.include_router(router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def read_root():
