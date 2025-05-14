@@ -22,7 +22,7 @@ uvicorn app.main:app --reload
 
 ## Project Structure
 
-- `app/`: Main application package
+  - `app/`: Main application package
   - `config.py`: Configuration settings
   - `database.py`: Database connection
   - `models/`: SQLAlchemy models
