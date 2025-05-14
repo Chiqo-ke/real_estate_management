@@ -118,25 +118,135 @@ async def create_payment(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Verify if the user is the tenant making the payment
-    if current_user.id != payment.tenant_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You can only make payments for your own leases"
+    try:
+        # Start transaction
+        db.execute(text("BEGIN"))
+        
+        # Verify invoice exists and get current status with remaining amount
+        invoice = db.execute(
+            text("""
+                SELECT 
+                    i.*, 
+                    l.tenant_id,
+                    i.amount - COALESCE((
+                        SELECT SUM(amount) 
+                        FROM payments 
+                        WHERE invoice_id = i.invoice_id
+                    ), 0) as remaining_amount
+                FROM invoices i
+                JOIN leases l ON i.lease_id = l.lease_id
+                WHERE i.invoice_id = :invoice_id
+            """),
+            {"invoice_id": payment.invoice_id}
+        ).fetchone()
+        
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+            
+        if invoice.tenant_id != current_user.tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only pay your own invoices"
+            )
+        
+        # Convert amounts for comparison
+        payment_amount = float(payment.amount)
+        remaining_amount = float(invoice.remaining_amount)
+        
+        # Validate payment amount
+        if payment_amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment amount must be greater than zero"
+            )
+        
+        if payment_amount > remaining_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment amount exceeds remaining balance of {remaining_amount}"
+            )
+        
+        # Record payment
+        payment_query = text("""
+            INSERT INTO payments (
+                invoice_id, payment_date, amount, payment_method, 
+                reference_number, notes
+            )
+            VALUES (
+                :invoice_id, COALESCE(:payment_date, CURRENT_DATE), :amount, 
+                :payment_method, :reference, :notes
+            )
+        """)
+        
+        result = db.execute(
+            payment_query,
+            {
+                "invoice_id": payment.invoice_id,
+                "payment_date": payment.payment_date,
+                "amount": payment_amount,
+                "payment_method": payment.payment_method.value,
+                "reference": payment.payment_reference,
+                "notes": f"Payment of {payment_amount} via {payment.payment_method.value}"
+            }
         )
-    
-    db_payment = Payment(
-        amount=payment.amount,
-        lease_id=payment.lease_id,
-        tenant_id=current_user.id,
-        payment_method=payment.payment_method,
-        status="pending"
-    )
-    
-    db.add(db_payment)
-    db.commit()
-    db.refresh(db_payment)
-    return db_payment
+        
+        # Get the last inserted payment
+        payment_id = result.lastrowid
+        
+        # Update invoice status based on total payments
+        db.execute(
+            text("""
+                UPDATE invoices i
+                SET 
+                    status = CASE 
+                        WHEN (
+                            SELECT COALESCE(SUM(amount), 0) 
+                            FROM payments 
+                            WHERE invoice_id = i.invoice_id
+                        ) >= i.amount THEN 'Paid'
+                        WHEN (
+                            SELECT COALESCE(SUM(amount), 0) 
+                            FROM payments 
+                            WHERE invoice_id = i.invoice_id
+                        ) > 0 THEN 'Partially Paid'
+                        ELSE 'Pending'
+                    END
+                WHERE invoice_id = :invoice_id
+            """),
+            {"invoice_id": payment.invoice_id}
+        )
+        
+        # Fetch the updated payment record
+        payment_record = db.execute(
+            text("""
+                SELECT 
+                    p.*,
+                    i.amount as invoice_amount,
+                    i.amount - COALESCE((
+                        SELECT SUM(amount) 
+                        FROM payments 
+                        WHERE invoice_id = i.invoice_id
+                    ), 0) as remaining_balance
+                FROM payments p
+                JOIN invoices i ON p.invoice_id = i.invoice_id
+                WHERE p.payment_id = :id
+            """),
+            {"id": payment_id}
+        ).fetchone()
+        
+        db.execute(text("COMMIT"))
+        
+        # Format response
+        response_data = dict(payment_record._mapping)
+        response_data["amount"] = float(response_data["amount"])
+        response_data["invoice_amount"] = float(response_data["invoice_amount"])
+        response_data["remaining_balance"] = float(response_data["remaining_balance"])
+        
+        return response_data
+        
+    except Exception as e:
+        db.execute(text("ROLLBACK"))
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/my-payments", response_model=List[PaymentResponse])
 async def get_my_payments(

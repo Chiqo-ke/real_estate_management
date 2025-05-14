@@ -9,8 +9,23 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 @router.get("/")
 async def get_invoices(db: Session = Depends(get_db)):
     query = text("""
-        SELECT i.*, l.unit_number, p.name as property_name, 
-               t.first_name, t.last_name
+        SELECT 
+            i.*, 
+            l.unit_number, 
+            p.name as property_name, 
+            t.first_name, 
+            t.last_name,
+            i.amount as original_amount,
+            i.amount - COALESCE((
+                SELECT SUM(amount) 
+                FROM payments 
+                WHERE invoice_id = i.invoice_id
+            ), 0) as remaining_amount,
+            COALESCE((
+                SELECT SUM(amount) 
+                FROM payments 
+                WHERE invoice_id = i.invoice_id
+            ), 0) as paid_amount
         FROM invoices i
         JOIN leases l ON i.lease_id = l.lease_id
         JOIN properties p ON l.property_id = p.property_id
@@ -18,7 +33,18 @@ async def get_invoices(db: Session = Depends(get_db)):
         ORDER BY i.due_date DESC
     """)
     results = db.execute(query).fetchall()
-    return [dict(row._mapping) for row in results]
+    
+    # Convert Decimal values to float and format response
+    invoices = []
+    for row in results:
+        invoice_dict = dict(row._mapping)
+        invoice_dict['original_amount'] = float(invoice_dict['original_amount'])
+        invoice_dict['remaining_amount'] = float(invoice_dict['remaining_amount'])
+        invoice_dict['paid_amount'] = float(invoice_dict['paid_amount'])
+        invoice_dict['amount'] = float(invoice_dict['remaining_amount'])  # Update amount to show remaining
+        invoices.append(invoice_dict)
+    
+    return invoices
 
 @router.post("/generate-monthly")
 async def generate_monthly_invoices(db: Session = Depends(get_db)):

@@ -186,5 +186,8 @@ async def get_current_user(
     
     if tenant is None:
         raise credentials_exception
-        
-    return User.__table__.create(tenant._mapping)
+
+    # Create a dictionary with tenant data
+    tenant_dict = dict(tenant._mapping)
+    # Initialize User object with tenant data
+    return User(**tenant_dict)

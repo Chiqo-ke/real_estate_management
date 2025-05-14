@@ -8,21 +8,21 @@ class PaymentMethod(str, Enum):
     CHECK = "Check"
     CREDIT_CARD = "Credit Card"
     BANK_TRANSFER = "Bank Transfer"
+    MPESA = "MPESA"
     OTHER = "Other"
 
 class PaymentBase(BaseModel):
     amount: float
     payment_method: PaymentMethod
-    reference_number: Optional[str] = None
-    notes: Optional[str] = None
+    invoice_id: int
+    payment_reference: Optional[str] = None
+    payment_date: Optional[datetime] = None
 
 class PaymentCreate(PaymentBase):
-    invoice_id: int
+    pass
 
 class PaymentResponse(PaymentBase):
     payment_id: int
-    invoice_id: int
-    payment_date: datetime
     created_at: datetime
     updated_at: datetime
 
